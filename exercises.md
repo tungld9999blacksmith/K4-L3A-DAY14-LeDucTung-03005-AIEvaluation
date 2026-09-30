@@ -30,31 +30,45 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Score 0.5-0.6: LLM nhắc lại một số concept đúng nhưng cũng có chi tiết không chính xác. Phổ biến với complex topics | Score < 0.4: Trả lời toàn bịa, không grounded vào context. Hallucination nghiêm trọng | Retrain generation model hoặc áp dụng hallucination filter |
+| Answer Relevance | Score 0.5–0.6: Trả lời có phần liên quan nhưng chứa thông tin off-topic. Ví dụ: hỏi "return policy" nhưng trả lời xen vào "warranty" | Score < 0.4: Trả lời hoàn toàn không trả lời câu hỏi, chỉ nói chủ đề khác. Off-topic/intent mismatch | Cải thiện prompt clarity hoặc intent detection |
+| Context Recall | Score 0.5–0.6: Retriever lấy được 50% thông tin cần. Có thể chấp nhận nếu answer vẫn partial but reasonable | Score < 0.3: Retriever miss > 70% evidence. Answer thiếu quá nhiều info  | Tăng retrieval pool, improve chunking, retrain retriever |
+| Context Precision | Score 0.5–0.6: Có noise chunks nhưng relevant chunks vẫn ranking trên. Ảnh hưởng nhỏ | Score < 0.3: Relevant chunks bị bury ở dưới, model dừa sớm. Lãng phí context window | Thêm reranking, cải thiện retriever ranking |
+| Completeness | Score 0.5–0.6: Answer cover 50% expected answer. Một số chi tiết bị thiếu nhưng core idea có | Score < 0.3: Answer cover < 30%, mất thông tin chính. Hoàn toàn không đúng | Tăng của sổ ngữ cảnh, cải thiện retrieval, finetune for thoroughness |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
 Ba bias thường gặp:
 
-- Position bias: judge ưu tiên answer xuất hiện trước.
+- Position bias: jG05-
 - Verbosity bias: judge ưu tiên answer dài hơn.
 - Self-preference: judge ưu tiên output giống chính model đó.
 
 **Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
 
 > *Câu trả lời:*
+> **Condition A**: Cho judge hai candidate answers theo thứ tự [Answer A, Answer B].
+> **Condition B**: Cho judge cùng hai answers nhưng đảo thứ tự [Answer B, Answer A] (sử dụng cùng nội dung).
+> Nếu judge nhất quán ưu tiên answer xuất hiện ở vị trí đầu tiên (Condition A: điểm A cao; Condition B: điểm B cao) mặc dù nội dung giống → Position bias xác nhận.
+> Lặp lại trên 20-30 Q&A pairs để xác định mức độ bias.
 
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
+> Định nghĩa rõ "Completeness ≠ Verbosity" trong rubric bằng cách:
+> - Tính điểm dựa trên **coverage** (phần trăm key points được trả lời), không phải **độ dài**.
+> - Ví dụ: "Score 5 = Covers ALL key points concisely; Score 3 = Covers 60% points nhưng có thể cụ thể hơn"
+> - Thêm criteria: "Conciseness: Loại bỏ từ/thông tin không cần thiết" để penalize verbosity.
+> - Cho exemplar ngắn gọn nhưng đầy đủ điểm cao, và exemplar dài rườm rà điểm thấp.
 
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
 > *Câu trả lời:*
+> LLM judge có bias nội tại (position, verbosity, self-preference) và inconsistency. Calibration giúp:
+> - So sánh LLM scores vs Human scores trên subset 50-100 cases để phát hiện systematic error (ví dụ: LLM quá lenient, human quá strict).
+> - Adjust rubric/prompt để LLM judge align với human expectations.
+> - Thiết lập threshold (ví dụ: LLM score ≥ 0.75 = human would approve).
+> - Tăng confidence khi dùng LLM judge trong CI/CD gates, đảm bảo kết quả đáng tin cậy.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,13 +76,27 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | ≥ 0.7 | Hallucination = fatal. Score < 0.7 = 30% content có thể sai → block. |
+| Answer Relevance | ≥ 0.65 | Score < 0.65 = 35% answer off-topic → user frustrated → block. |
+| Completeness | ≥ 0.6 | Score < 0.6 = incomplete. Safety margin cho phép partial answers nếu on-topic. |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+> **Offline evaluation** (trước production, golden dataset):
+> - Khi: code change, prompt update, retriever change
+> - Nhanh (< 1 phút) → phát hiện regression sớm
+> - Dùng để block deployment nếu score dưới threshold
+>
+> **Online evaluation** (production, real traffic):
+> - Khi: system đã deploy, monitor real user queries
+> - Log sample answers + LLM judge scores
+> - Detect performance drift dần theo thời gian
+> - Dataset thực > golden dataset
+>
+> **Human review** (gold standard, cuối cùng):
+> - Khi: offline score ở vùng xám (0.65 vs 0.7), metric conflict, hoặc quarterly audit
+> - Expensive nhưng accurate → final gating decision khi cần high confidence
 
 ---
 

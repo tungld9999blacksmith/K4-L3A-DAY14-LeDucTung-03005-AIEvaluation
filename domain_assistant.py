@@ -266,6 +266,89 @@ class OpenAIGenerator:
         return answer
 
 
+class OpenAICompatibleChatGenerator:
+    """Chat Completions generator for OpenAI-compatible providers (Gemini, OpenRouter)."""
+
+    def __init__(
+        self,
+        provider_name: str,
+        api_key_env: str,
+        model_env: str,
+        base_url: str,
+        max_output_tokens: int = 300,
+        default_headers: dict[str, str] | None = None,
+    ) -> None:
+        api_key = os.getenv(api_key_env, "").strip()
+        self.model = os.getenv(model_env, "").strip()
+        if not api_key:
+            raise RuntimeError(f"{api_key_env} is missing from .env")
+        if not self.model:
+            raise RuntimeError(f"{model_env} is missing from .env")
+        self.provider_name = provider_name
+        self.client = OpenAI(
+            api_key=api_key, base_url=base_url, default_headers=default_headers
+        )
+        self.max_output_tokens = max_output_tokens
+
+    def generate(self, prompt: str) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=self.max_output_tokens,
+        )
+        content = response.choices[0].message.content if response.choices else None
+        answer = (content or "").strip()
+        if not answer:
+            raise RuntimeError(f"{self.provider_name} returned an empty answer")
+        return answer
+
+
+class GeminiGenerator(OpenAICompatibleChatGenerator):
+    def __init__(self, max_output_tokens: int = 300) -> None:
+        super().__init__(
+            provider_name="Gemini",
+            api_key_env="GEMINI_API_KEY",
+            model_env="GEMINI_MODEL",
+            base_url=os.getenv(
+                "GEMINI_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta/openai/",
+            ).strip(),
+            max_output_tokens=max_output_tokens,
+        )
+
+
+class OpenRouterGenerator(OpenAICompatibleChatGenerator):
+    def __init__(self, max_output_tokens: int = 300) -> None:
+        super().__init__(
+            provider_name="OpenRouter",
+            api_key_env="OPENROUTER_API_KEY",
+            model_env="OPENROUTER_MODEL",
+            base_url=os.getenv(
+                "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+            ).strip(),
+            max_output_tokens=max_output_tokens,
+            default_headers={"X-Title": "OrbitTech AI Evaluation Lab"},
+        )
+
+
+GENERATORS: dict[str, Callable[[], TextGenerator]] = {
+    "openai": OpenAIGenerator,
+    "gemini": GeminiGenerator,
+    "openrouter": OpenRouterGenerator,
+}
+
+
+def create_generator(provider: str | None = None) -> TextGenerator:
+    """Build the generator selected by `provider` or LLM_PROVIDER (default: openai)."""
+    name = (provider or os.getenv("LLM_PROVIDER", "") or "openai").strip().lower()
+    if name not in GENERATORS:
+        raise RuntimeError(
+            f"Unsupported LLM_PROVIDER {name!r}; choose one of {sorted(GENERATORS)}"
+        )
+    return GENERATORS[name]()
+
+
 @dataclass(frozen=True)
 class DomainResponse:
     question: str
@@ -299,7 +382,7 @@ class DomainAssistant:
         return cls(
             corpus_id,
             BM25Retriever(chunks),
-            generator if generator is not None else OpenAIGenerator(),
+            generator if generator is not None else create_generator(),
             top_k,
         )
 
@@ -489,6 +572,12 @@ def parse_args() -> argparse.Namespace:
         help="Output artifact (default: artifacts/actual_answers.json)",
     )
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument(
+        "--provider",
+        choices=sorted(GENERATORS),
+        default=None,
+        help="LLM provider (default: LLM_PROVIDER from .env, else openai)",
+    )
     return parser.parse_args()
 
 
@@ -498,6 +587,7 @@ def main() -> int:
         artifact = generate_actual_answers(
             args.dataset,
             args.corpus_dir,
+            generator=create_generator(args.provider),
             top_k=args.top_k,
             progress=lambda message: print(message, flush=True),
         )
