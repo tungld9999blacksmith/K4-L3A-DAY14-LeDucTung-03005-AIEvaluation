@@ -369,22 +369,61 @@ thay đổi Context Recall hay không.
 4. Rerank cùng tập chunks, không thêm hoặc xóa chunk.
 5. Tính lại hai metrics và giải thích kết quả.
 
+Phương pháp: dùng `retrieved_contexts` (top-5 BM25) đã lưu trong
+`artifacts/actual_answers.json` — không gọi lại retriever hay model. Rerank bằng
+`rerank_by_overlap(contexts, question)` (sắp theo số token trùng với **câu hỏi**;
+không dùng expected answer để tránh leakage). Kiểm tra `sorted(after) == sorted(before)`
+cho mọi case → cùng tập chunks. Metrics tính bằng `evaluate_context_recall` và
+`evaluate_context_precision` với expected answer trong `golden_dataset.json`.
+Chạy trên cả 20 cases; bảng chọn 7 cases gồm cả tăng, không đổi và giảm.
+
 | ID | Recall before | Recall after | Precision before | Precision after | Delta Precision |
 |---|---:|---:|---:|---:|---:|
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| **Avg** | | | | | |
+| M01 | 0.765 | 0.765 | 0.700 | 1.000 | +0.300 |
+| H03 | 0.923 | 0.923 | 0.887 | 1.000 | +0.113 |
+| A01 | 0.800 | 0.800 | 0.589 | 0.700 | +0.111 |
+| E01 | 1.000 | 1.000 | 0.917 | 1.000 | +0.083 |
+| M04 | 0.452 | 0.452 | 1.000 | 1.000 | +0.000 |
+| H05 | 0.697 | 0.697 | 1.000 | 0.917 | −0.083 |
+| A02 | 0.931 | 0.931 | 1.000 | 0.950 | −0.050 |
+| **Avg** | **0.795** | **0.795** | **0.870** | **0.938** | **+0.068** |
+
+Trên toàn bộ 20 cases: Recall 0.830 → 0.830 (không đổi ở mọi case); Precision
+0.917 → 0.953 (+0.035); 7 cases tăng (E01, E05, M01, M02, H03, H04, A01), 2 cases giảm
+(H05, A02), 11 cases không đổi (trong đó M04, H02 có đổi thứ tự nhưng các chunk
+relevant vẫn ở cùng vị trí tương đối).
+
+Quan sát đáng chú ý:
+- **M01 (+0.300):** chunk relevant thứ hai (overlap 0.29 với expected) ở rank 5
+  được đưa lên rank 2 vì trùng từ "account", "order", "Confirmed" với câu hỏi.
+- **H05 (−0.083), A02 (−0.050):** chunk gần ngưỡng relevance bị đẩy xuống dưới
+  một chunk noise. Reranker theo câu hỏi không biết chunk nào chứa đáp án.
+- **A01 (+0.111) là cải thiện "may mắn":** chunk tốt nhất (`00_system_scope.md`,
+  overlap 0.68) thực ra bị **đẩy từ rank 3 xuống rank 4** vì câu hỏi nói về "chest",
+  "investments" chứ không trùng từ với "scope". Precision tăng chỉ vì một chunk
+  vừa qua ngưỡng 0.1 được đưa lên đầu. Metric AP@K với ngưỡng nhị phân 0.1 có thể
+  thưởng một thứ tự thực tế kém hơn.
 
 **Tại sao Recall dự kiến không đổi?**
 
-> *Câu trả lời:*
+> *Câu trả lời:* Context Recall tính trên **hợp (union)** token của mọi chunk
+> được truy xuất, không phụ thuộc thứ tự. Rerank chỉ hoán vị cùng 5 chunks, không
+> thêm hay xóa chunk nào (đã assert `sorted(after) == sorted(before)`), nên tập
+> union giữ nguyên và recall giống hệt ở cả 20 cases. Ngược lại, Precision là AP@K
+> nên phụ thuộc vị trí của các chunk relevant — đó là thứ duy nhất rerank thay đổi.
 
 **Khi nào reranking không đủ và cần sửa retriever/query/chunking?**
 
-> *Câu trả lời:*
+> *Câu trả lời:* Khi evidence **không có trong tập ứng viên**. Rerank không thể đưa
+> vào chunk mà retriever chưa lấy. M04 (recall 0.45) và H04 (recall 0.43) giữ
+> nguyên recall sau rerank vì OT-07-P02/P03 và OT-06-P03 nằm ngoài top-5; với H04,
+> OT-06-P03 còn nằm ngoài top-10 do câu hỏi dùng "dropped/cracked" còn tài liệu
+> dùng "accidental impact". Những trường hợp này cần sửa ở tầng trước: tăng
+> candidate pool (retrieve top-20 rồi mới rerank xuống top-5), query rewriting /
+> hybrid dense retrieval cho vocabulary mismatch, hoặc chỉnh chunking khi một quy
+> tắc bị tách khỏi điều kiện của nó. Ngoài ra, reranker lexical theo câu hỏi có
+> thể làm tệ hơn (H05, A02), nên thực tế cần cross-encoder và đo lại trên benchmark
+> trước khi bật.
 
 ---
 
