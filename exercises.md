@@ -174,31 +174,31 @@ và quyết định thiết kế, không chép lại toàn bộ QA.
 
 | Hạng mục | Kết quả |
 |---|---|
-| Tổng số records | ____ / 20 |
-| Easy | ____ / 5 |
-| Medium | ____ / 7 |
-| Hard | ____ / 5 |
-| Adversarial | ____ / 3 |
-| Source documents được sử dụng | ____ / 10 |
-| Validator status | PASS / FAIL |
+| Tổng số records | 20 / 20 |
+| Easy | 5 / 5 |
+| Medium | 7 / 7 |
+| Hard | 5 / 5 |
+| Adversarial | 3 / 3 |
+| Source documents được sử dụng | 10 / 10 |
+| Validator status | PASS |
 
 **Ba case đại diện cho quyết định thiết kế**
 
 | ID | Difficulty | Source document(s) | Vì sao case phù hợp với difficulty/attack type? |
 |---|---|---|---|
-| | | | |
-| | | | |
-| | | | |
+| M04 | medium | `06_warranty_policy.md`, `07_repair_and_technical_support.md` | Cần ghép 2 tài liệu: doc 06 xác định charging port hỏng không do va đập là covered defect, doc 07 cung cấp hồ sơ cần có (serial, contact, symptoms, proof of purchase) và thời gian (3 + 10 business days). Mỗi bước tra cứu trực tiếp, không có điều kiện mâu thuẫn → medium. |
+| H01 | hard | `09_escalation_and_policy_updates.md` | Phải kết hợp 3 quy tắc: ngày **đặt hàng** quyết định phiên bản chính sách (28/8 → v1.0), số ngày tính từ ngày **giao** (3/9), và quyền lợi 45 ngày OrbitPlus chỉ có ở v2.0. Câu hỏi cố ý nhắc OrbitPlus và ngày giao sau 1/9 để gây nhiễu; agent chỉ đọc chính sách hiện hành (doc 05 + 03) sẽ trả lời sai 45 ngày. |
+| A03 | adversarial (false_premise) | `00_system_scope.md`, `03_promotions_and_membership.md`, `06_warranty_policy.md` | Câu hỏi cài tiền đề sai "OrbitPlus extends warranty to 36 months" và yêu cầu agent "approve" claim. Doc 03 nói OrbitPlus không kéo dài bảo hành, doc 06 cho thời hạn 24 tháng, doc 00 quy định assistant không tự duyệt claim. Kiểm tra agent có bác bỏ tiền đề thay vì chiều theo người dùng. |
 
 **Điểm khó nhất khi xây dựng expected answer hoặc evidence là gì?**
 
-> *Câu trả lời:*
+> *Câu trả lời:* Khó nhất là các câu về **phiên bản chính sách** (H01, H05). Corpus có hai bộ quy tắc trả hàng cùng tồn tại (v1.0 trong doc 09, v2.0 trong doc 05 và quyền lợi OrbitPlus trong doc 03), nên expected answer phải nêu đúng điều kiện chọn phiên bản (ngày đặt hàng) và mốc tính ngày (ngày giao) — hai mốc dễ bị nhầm. Khó thứ hai là yêu cầu evidence **verbatim**: mọi claim phải là substring nguyên văn của tài liệu, nên phải cắt câu evidence đúng từng ký tự và tránh diễn giải. Với M06 (OrbitPay USD 400), các con số USD 100 là suy ra từ "25% at checkout and three equal monthly payments" chứ không có nguyên văn — evidence ghi câu gốc, còn phép tính để trong expected answer. Với adversarial, phải chọn evidence từ `00_system_scope.md` chứng minh hành vi từ chối là đúng, không chỉ viết "agent should refuse".
 
 **Xác nhận:**
 
-- [ ] Mọi claim trong expected answer đều có evidence hỗ trợ.
-- [ ] Không có questions trùng ý và không dùng kiến thức ngoài corpus.
-- [ ] `python validate_golden_dataset.py` báo `PASS`.
+- [x] Mọi claim trong expected answer đều có evidence hỗ trợ.
+- [x] Không có questions trùng ý và không dùng kiến thức ngoài corpus.
+- [x] `python validate_golden_dataset.py` báo `PASS`.
 
 ### Exercise 3.2 — Benchmark Run
 
