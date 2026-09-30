@@ -344,19 +344,78 @@ verbosity bias và self-preference bằng cách nào?
 Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
 và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 
-| Tiêu chí | Framework 1: ____ | Framework 2: ____ |
+**Phương pháp:** script `scripts/compare_frameworks.py` đọc cùng input đã lưu
+(question từ `golden_dataset.json`; answer và `retrieved_contexts` từ
+`artifacts/actual_answers.json`; reference = `expected_answer`) — không sinh câu
+trả lời mới. 7 cases chọn gồm cả pass và fail: E04, M01, M04, H01, H04, A01, A02.
+Cả hai framework dùng cùng judge **`gemini-3.5-flash-lite`** (temperature 0, free
+tier 15 RPM nên chạy tuần tự, retry khi 429). Kết quả lưu ở
+`artifacts/framework_comparison.json`. Metrics: RAGAS `Faithfulness`,
+`AnswerRelevancy`, `LLMContextRecall`, `LLMContextPrecisionWithReference`;
+DeepEval `FaithfulnessMetric`, `AnswerRelevancyMetric`, `ContextualRecallMetric`,
+`ContextualPrecisionMetric`.
+
+**Điểm từng case** (F = faithfulness, Rel = answer relevancy, CR = context recall, CP = context precision)
+
+| ID | Heuristic F / Rel / CR / CP | RAGAS F / Rel / CR / CP | DeepEval F / Rel / CR / CP |
+|---|---|---|---|
+| E04 | 1.00 / 0.60 / 1.00 / 1.00 | 1.00 / **NaN** / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
+| M01 | 0.91 / 0.23 / 0.76 / 0.70 | 1.00 / **NaN** / 1.00 / 0.70 | 1.00 / 1.00 / 1.00 / 0.70 |
+| M04 | 0.22 / 0.43 / 0.45 / 1.00 | 1.00 / **NaN** / 0.33 / 1.00 | 1.00 / 1.00 / 0.33 / 0.70 |
+| H01 | 0.67 / 0.14 / 0.91 / 1.00 | 0.00 / **NaN** / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
+| H04 | 0.22 / 0.47 / 0.43 / 0.75 | 1.00 / **NaN** / 0.67 / 1.00 | 1.00 / 1.00 / 0.50 / 1.00 |
+| A01 | 0.56 / 0.05 / 0.80 / 0.59 | 0.86 / **NaN** / 1.00 / 0.33 | 1.00 / 1.00 / 1.00 / 0.33 |
+| A02 | 0.89 / 0.10 / 0.93 / 1.00 | 1.00 / **NaN** / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
+| **Avg** | 0.64 / 0.29 / 0.75 / 0.86 | 0.84 / **lỗi** / 0.86 / 0.86 | 1.00 / 1.00 / 0.83 / 0.82 |
+
+> **Lỗi NaN:** RAGAS `AnswerRelevancy` trả NaN cho cả 7 cases. Metric này cần
+> embeddings; lời gọi `gemini-embedding-001` qua endpoint OpenAI-compatible của
+> Gemini thất bại và RAGAS nuốt lỗi, ghi NaN thay vì dừng. Chưa chạy lại để sửa;
+> các so sánh relevancy bên dưới chỉ dùng heuristic và DeepEval.
+
+| Tiêu chí | Framework 1: RAGAS 0.4.3 | Framework 2: DeepEval 4.2.7 |
 |---|---|---|
-| Setup complexity | | |
-| Metrics available | | |
-| CI/CD integration | | |
-| Kết quả trên cùng dataset | | |
-| Insight rút ra | | |
+| Setup complexity | Trung bình: phải bọc LLM + embeddings qua LangChain wrapper (`LangchainLLMWrapper`, `LangchainEmbeddingsWrapper`), cấu hình `RunConfig` để tránh 429. Lỗi của từng metric bị nuốt thành NaN — dễ bỏ sót (relevancy NaN không báo lỗi). | Dễ hơn: có sẵn `GeminiModel`, mỗi metric gọi `measure()` độc lập. Nhưng lỗi quota làm dừng cả chương trình, phải tự viết retry. Chậm hơn ~3 lần (640s vs 222s) vì mỗi metric sinh nhiều LLM call (statements/verdicts/reason). |
+| Metrics available | Faithfulness, answer relevancy, context recall/precision (LLM & non-LLM), noise sensitivity, factual correctness, aspect critic, rubric score. | Faithfulness, answer relevancy, contextual recall/precision/relevancy, hallucination, bias, toxicity, G-Eval (rubric tùy chỉnh), DAG metric. Mỗi điểm kèm `reason` bằng lời. |
+| CI/CD integration | Trả DataFrame; phải tự viết gate (vd. so với baseline như `run_regression()`). | Tích hợp pytest (`assert_test`, `deepeval test run`), mỗi metric có `threshold` → fail test trực tiếp. Thuận tiện làm deployment gate. |
+| Kết quả trên cùng dataset | F 0.84, CR 0.86, CP 0.86; Rel lỗi NaN. Faithfulness H01 = 0.00. | F 1.00, Rel 1.00, CR 0.83, CP 0.82. Mọi case F và Rel đều 1.00. |
+| Insight rút ra | Retrieval metrics đồng thuận với DeepEval và với chẩn đoán trong reflection (M04, H04 thiếu evidence; A01 precision thấp). Faithfulness có một điểm bất thường (H01). | Answer-side metrics quá dễ dãi — không phân biệt được câu trả lời đầy đủ với câu nói "không tìm thấy thông tin". Cần G-Eval với rubric domain (Exercise 3.3) mới dùng làm gate được. |
 
 - Scores có nhất quán không?
 - Framework nào strict hơn và vì sao?
 - Hai framework có tìm ra cùng failure cases không?
 
 > *Phân tích:*
+>
+> **Nhất quán:** Ở **retrieval metrics**, hai framework nhất quán cao: context
+> recall giống hệt nhau ở 5/7 cases, cả hai chấm M04 = 0.33 và H04 thấp (0.67 /
+> 0.50); context precision cùng xếp A01 thấp nhất (0.33) và M01 = 0.70. Kết quả
+> này cũng khớp với heuristic của lab (M04, H04 recall < 0.46; A01 precision thấp
+> nhất 0.59) → chẩn đoán "M04/H04 thiếu evidence" được ba cách đo xác nhận. Ở
+> **answer-side metrics**, không nhất quán: heuristic faithfulness chấm M04/H04 =
+> 0.22 (câu "insufficient evidence" ít trùng token), trong khi cả hai LLM judge
+> chấm 1.00 — đúng hơn, vì hai câu trả lời không có claim nào ngoài context.
+>
+> **Strict hơn:** RAGAS strict hơn ở faithfulness (H01 = 0.00, A01 = 0.86) còn
+> DeepEval cho 1.00 mọi case. Tuy nhiên H01 = 0.00 là **false negative**: câu
+> "You have 21 calendar days" có nguyên văn trong OT-09-P04. Giả thuyết (chưa
+> kiểm chứng bằng trace RAGAS): judge tách claim thành "khách này có 21 ngày" và
+> không nối được với câu thì quá khứ "It allowed 21 calendar days" của v1.0. DeepEval
+> dễ dãi hơn rõ rệt ở answer relevancy: M04 được 1.00 với lý do "addresses both
+> … and the timeframe", trong khi câu trả lời nói thẳng là không có thông tin về
+> thời gian — judge đọc sai output. Như vậy "strict" của RAGAS không đồng nghĩa
+> "đúng", và "dễ dãi" của DeepEval là leniency bias (tất cả ≥ 0.8, đúng dấu hiệu
+> mà `detect_bias()` sẽ gắn cờ).
+>
+> **Cùng failure cases?** Với ngưỡng 0.5: context recall — cả hai tìm ra **M04**
+> (DeepEval H04 = 0.50 nằm sát ngưỡng); context precision — cả hai tìm ra **A01**.
+> Faithfulness — RAGAS chỉ ra H01 (false negative), DeepEval không ra case nào,
+> heuristic ra M04/H04 (cũng là false negative). Không framework nào bắt được lỗi
+> thật của H01 và M04 ở phía answer (câu trả lời đúng nhưng thiếu lập luận/thiếu
+> ý) — vì faithfulness và relevancy không đo **completeness** so với expected answer.
+> Kết luận: dùng RAGAS/DeepEval retrieval metrics làm gate được; answer-side cần
+> thêm metric so với reference (vd. DeepEval G-Eval hoặc RAGAS factual correctness)
+> theo rubric Exercise 3.3, và calibration với người chấm trước khi tin điểm.
 
 ### Exercise 3.5 — Retrieval Reranking (Bonus +5)
 
