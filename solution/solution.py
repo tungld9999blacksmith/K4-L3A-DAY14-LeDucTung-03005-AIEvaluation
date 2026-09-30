@@ -392,7 +392,7 @@ def rerank_by_overlap(contexts: list[str], query: str) -> list[str]:
 
     query_tokens = _tokenize(query)
 
-    return sorted(contexts, key=lambda c: len(query_tokens & c), reverse=True)
+    return sorted(contexts, key=lambda c: len(query_tokens & _tokenize(c)), reverse=True)
 
 
 

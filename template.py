@@ -392,7 +392,7 @@ def rerank_by_overlap(contexts: list[str], query: str) -> list[str]:
 
     query_tokens = _tokenize(query)
 
-    return sorted(contexts, key=lambda c: len(query_tokens & c), reverse=True)
+    return sorted(contexts, key=lambda c: len(query_tokens & _tokenize(c)), reverse=True)
 
 
 
@@ -565,12 +565,18 @@ class BenchmarkRunner:
         # Pass pair.retrieved_contexts as the optional contexts argument and
         # preserve the original pair on the returned EvalResult.
 
-        return [evaluator.run_full_eval(agent_fn(pair.question),
-                                         pair.question, 
-                                         pair.context,
-                                         pair.expected_answer,
-                                         pair.retrieved_contexts
-                                         ) for pair in qa_pairs]
+        results = []
+        for pair in qa_pairs:
+            result = evaluator.run_full_eval(
+                agent_fn(pair.question),
+                pair.question,
+                pair.context,
+                pair.expected_answer,
+                pair.retrieved_contexts or None,
+            )
+            result.qa_pair = pair
+            results.append(result)
+        return results
 
     def generate_report(self, results: list[EvalResult]) -> dict[str, Any]:
         """
