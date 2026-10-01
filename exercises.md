@@ -350,7 +350,10 @@ và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 trả lời mới. 7 cases chọn gồm cả pass và fail: E04, M01, M04, H01, H04, A01, A02.
 Cả hai framework dùng cùng judge **`gemini-3.5-flash-lite`** (temperature 0, free
 tier 15 RPM nên chạy tuần tự, retry khi 429). Kết quả lưu ở
-`artifacts/framework_comparison.json`. Metrics: RAGAS `Faithfulness`,
+`artifacts/framework_comparison.json`. RAGAS `AnswerRelevancy` dùng embeddings
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` qua Hugging Face
+Inference API. Thời gian chạy: RAGAS 222s (+24s chạy lại relevancy), DeepEval
+640s. Metrics: RAGAS `Faithfulness`,
 `AnswerRelevancy`, `LLMContextRecall`, `LLMContextPrecisionWithReference`;
 DeepEval `FaithfulnessMetric`, `AnswerRelevancyMetric`, `ContextualRecallMetric`,
 `ContextualPrecisionMetric`.
@@ -359,27 +362,33 @@ DeepEval `FaithfulnessMetric`, `AnswerRelevancyMetric`, `ContextualRecallMetric`
 
 | ID | Heuristic F / Rel / CR / CP | RAGAS F / Rel / CR / CP | DeepEval F / Rel / CR / CP |
 |---|---|---|---|
-| E04 | 1.00 / 0.60 / 1.00 / 1.00 | 1.00 / **NaN** / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
-| M01 | 0.91 / 0.23 / 0.76 / 0.70 | 1.00 / **NaN** / 1.00 / 0.70 | 1.00 / 1.00 / 1.00 / 0.70 |
-| M04 | 0.22 / 0.43 / 0.45 / 1.00 | 1.00 / **NaN** / 0.33 / 1.00 | 1.00 / 1.00 / 0.33 / 0.70 |
-| H01 | 0.67 / 0.14 / 0.91 / 1.00 | 0.00 / **NaN** / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
-| H04 | 0.22 / 0.47 / 0.43 / 0.75 | 1.00 / **NaN** / 0.67 / 1.00 | 1.00 / 1.00 / 0.50 / 1.00 |
-| A01 | 0.56 / 0.05 / 0.80 / 0.59 | 0.86 / **NaN** / 1.00 / 0.33 | 1.00 / 1.00 / 1.00 / 0.33 |
-| A02 | 0.89 / 0.10 / 0.93 / 1.00 | 1.00 / **NaN** / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
-| **Avg** | 0.64 / 0.29 / 0.75 / 0.86 | 0.84 / **lỗi** / 0.86 / 0.86 | 1.00 / 1.00 / 0.83 / 0.82 |
+| E04 | 1.00 / 0.60 / 1.00 / 1.00 | 1.00 / 0.96 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
+| M01 | 0.91 / 0.23 / 0.76 / 0.70 | 1.00 / 0.77 / 1.00 / 0.70 | 1.00 / 1.00 / 1.00 / 0.70 |
+| M04 | 0.22 / 0.43 / 0.45 / 1.00 | 1.00 / 0.00 / 0.33 / 1.00 | 1.00 / 1.00 / 0.33 / 0.70 |
+| H01 | 0.67 / 0.14 / 0.91 / 1.00 | 0.00 / 0.60 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
+| H04 | 0.22 / 0.47 / 0.43 / 0.75 | 1.00 / 0.00 / 0.67 / 1.00 | 1.00 / 1.00 / 0.50 / 1.00 |
+| A01 | 0.56 / 0.05 / 0.80 / 0.59 | 0.86 / 0.00 / 1.00 / 0.33 | 1.00 / 1.00 / 1.00 / 0.33 |
+| A02 | 0.89 / 0.10 / 0.93 / 1.00 | 1.00 / 0.68 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 / 1.00 |
+| **Avg** | 0.64 / 0.29 / 0.75 / 0.86 | 0.84 / 0.43 / 0.86 / 0.86 | 1.00 / 1.00 / 0.83 / 0.82 |
 
-> **Lỗi NaN:** RAGAS `AnswerRelevancy` trả NaN cho cả 7 cases. Metric này cần
-> embeddings; lời gọi `gemini-embedding-001` qua endpoint OpenAI-compatible của
-> Gemini thất bại và RAGAS nuốt lỗi, ghi NaN thay vì dừng. Chưa chạy lại để sửa;
-> các so sánh relevancy bên dưới chỉ dùng heuristic và DeepEval.
+> **Lỗi NaN ở lần chạy đầu và cách sửa:** lần đầu RAGAS `AnswerRelevancy` trả
+> NaN cho cả 7 cases. Ban đầu nghi do embeddings, nhưng log cho thấy nguyên nhân
+> thật là lỗi `400 INVALID_ARGUMENT: Multiple candidates is not enabled for this
+> model`: metric gọi LLM với `n = strictness = 3` để sinh 3 câu hỏi ngược trong một
+> request, và endpoint OpenAI-compatible của Gemini không hỗ trợ `n > 1`. RAGAS
+> nuốt lỗi và ghi NaN. Đã sửa bằng `AnswerRelevancy(strictness=1)` và chạy lại riêng
+> metric này (`--ragas-relevancy-only`); embeddings chuyển sang
+> `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` qua Hugging Face
+> Inference API. Các metric khác giữ kết quả lần chạy đầu (cùng judge). Hạn chế:
+> strictness=1 chỉ dùng 1 câu hỏi sinh ra nên điểm relevancy dao động nhiều hơn.
 
 | Tiêu chí | Framework 1: RAGAS 0.4.3 | Framework 2: DeepEval 4.2.7 |
 |---|---|---|
-| Setup complexity | Trung bình: phải bọc LLM + embeddings qua LangChain wrapper (`LangchainLLMWrapper`, `LangchainEmbeddingsWrapper`), cấu hình `RunConfig` để tránh 429. Lỗi của từng metric bị nuốt thành NaN — dễ bỏ sót (relevancy NaN không báo lỗi). | Dễ hơn: có sẵn `GeminiModel`, mỗi metric gọi `measure()` độc lập. Nhưng lỗi quota làm dừng cả chương trình, phải tự viết retry. Chậm hơn ~3 lần (640s vs 222s) vì mỗi metric sinh nhiều LLM call (statements/verdicts/reason). |
+| Setup complexity | Trung bình–khó: phải bọc LLM + embeddings qua LangChain wrapper, cấu hình `RunConfig` để tránh 429, và phát hiện ra `AnswerRelevancy` cần `n>1` mà Gemini không hỗ trợ (phải hạ `strictness=1`). Lỗi từng metric bị nuốt thành NaN — dễ bỏ sót. | Dễ hơn: có sẵn `GeminiModel`, mỗi metric gọi `measure()` độc lập. Nhưng lỗi quota làm dừng cả chương trình, phải tự viết retry. Chậm hơn ~3 lần (640s vs 222s) vì mỗi metric sinh nhiều LLM call (statements/verdicts/reason). |
 | Metrics available | Faithfulness, answer relevancy, context recall/precision (LLM & non-LLM), noise sensitivity, factual correctness, aspect critic, rubric score. | Faithfulness, answer relevancy, contextual recall/precision/relevancy, hallucination, bias, toxicity, G-Eval (rubric tùy chỉnh), DAG metric. Mỗi điểm kèm `reason` bằng lời. |
 | CI/CD integration | Trả DataFrame; phải tự viết gate (vd. so với baseline như `run_regression()`). | Tích hợp pytest (`assert_test`, `deepeval test run`), mỗi metric có `threshold` → fail test trực tiếp. Thuận tiện làm deployment gate. |
-| Kết quả trên cùng dataset | F 0.84, CR 0.86, CP 0.86; Rel lỗi NaN. Faithfulness H01 = 0.00. | F 1.00, Rel 1.00, CR 0.83, CP 0.82. Mọi case F và Rel đều 1.00. |
-| Insight rút ra | Retrieval metrics đồng thuận với DeepEval và với chẩn đoán trong reflection (M04, H04 thiếu evidence; A01 precision thấp). Faithfulness có một điểm bất thường (H01). | Answer-side metrics quá dễ dãi — không phân biệt được câu trả lời đầy đủ với câu nói "không tìm thấy thông tin". Cần G-Eval với rubric domain (Exercise 3.3) mới dùng làm gate được. |
+| Kết quả trên cùng dataset | F 0.84, Rel 0.43, CR 0.86, CP 0.86. Faithfulness H01 = 0.00; Rel = 0.00 ở M04, H04, A01. | F 1.00, Rel 1.00, CR 0.83, CP 0.82. Mọi case F và Rel đều 1.00. |
+| Insight rút ra | Retrieval metrics đồng thuận với DeepEval và với chẩn đoán trong reflection. Answer relevancy chấm 0 cho câu trả lời "noncommittal" ("insufficient evidence") — bắt đúng M04/H04 nhưng phạt sai A01 (từ chối đúng). | Answer-side metrics quá dễ dãi — không phân biệt được câu trả lời đầy đủ với câu nói "không tìm thấy thông tin". Cần G-Eval với rubric domain (Exercise 3.3) mới dùng làm gate được. |
 
 - Scores có nhất quán không?
 - Framework nào strict hơn và vì sao?
@@ -388,31 +397,40 @@ DeepEval `FaithfulnessMetric`, `AnswerRelevancyMetric`, `ContextualRecallMetric`
 > *Phân tích:*
 >
 > **Nhất quán:** Ở **retrieval metrics**, hai framework nhất quán cao: context
-> recall giống hệt nhau ở 5/7 cases, cả hai chấm M04 = 0.33 và H04 thấp (0.67 /
-> 0.50); context precision cùng xếp A01 thấp nhất (0.33) và M01 = 0.70. Kết quả
+> recall giống hệt nhau ở 6/7 cases (chỉ H04 lệch: 0.67 vs 0.50), cả hai chấm
+> M04 = 0.33; context precision giống nhau ở 6/7 cases (chỉ M04 lệch: 1.00 vs
+> 0.70), cùng xếp A01 thấp nhất (0.33) và M01 = 0.70. Kết quả
 > này cũng khớp với heuristic của lab (M04, H04 recall < 0.46; A01 precision thấp
 > nhất 0.59) → chẩn đoán "M04/H04 thiếu evidence" được ba cách đo xác nhận. Ở
 > **answer-side metrics**, không nhất quán: heuristic faithfulness chấm M04/H04 =
 > 0.22 (câu "insufficient evidence" ít trùng token), trong khi cả hai LLM judge
 > chấm 1.00 — đúng hơn, vì hai câu trả lời không có claim nào ngoài context.
+> Answer relevancy lệch nhiều nhất: DeepEval 1.00 ở mọi case, RAGAS từ 0.00 đến
+> 0.96 (trung bình 0.43), heuristic từ 0.05 đến 0.60. Thứ tự RAGAS (E04 > M01 >
+> A02 > H01 > M04 = H04 = A01) gần với đánh giá đọc tay hơn heuristic, trừ A01.
 >
-> **Strict hơn:** RAGAS strict hơn ở faithfulness (H01 = 0.00, A01 = 0.86) còn
-> DeepEval cho 1.00 mọi case. Tuy nhiên H01 = 0.00 là **false negative**: câu
-> "You have 21 calendar days" có nguyên văn trong OT-09-P04. Giả thuyết (chưa
-> kiểm chứng bằng trace RAGAS): judge tách claim thành "khách này có 21 ngày" và
-> không nối được với câu thì quá khứ "It allowed 21 calendar days" của v1.0. DeepEval
-> dễ dãi hơn rõ rệt ở answer relevancy: M04 được 1.00 với lý do "addresses both
-> … and the timeframe", trong khi câu trả lời nói thẳng là không có thông tin về
-> thời gian — judge đọc sai output. Như vậy "strict" của RAGAS không đồng nghĩa
-> "đúng", và "dễ dãi" của DeepEval là leniency bias (tất cả ≥ 0.8, đúng dấu hiệu
-> mà `detect_bias()` sẽ gắn cờ).
+> **Strict hơn:** RAGAS strict hơn rõ rệt. Faithfulness: H01 = 0.00, A01 = 0.86
+> trong khi DeepEval cho 1.00 mọi case. Answer relevancy: RAGAS trung bình 0.43
+> so với 1.00 của DeepEval. RAGAS chấm **0.00** cho M04, H04 và A01 vì cả ba câu
+> trả lời mở đầu bằng "Insufficient evidence…": RAGAS đánh dấu câu trả lời
+> *noncommittal* và nhân điểm với 0. Với M04 và H04 đây là phát hiện **đúng** (khách
+> không nhận được câu trả lời dù corpus có), trùng với chẩn đoán trong reflection;
+> với A01 là **false negative**, vì từ chối câu hỏi y tế/đầu tư là hành vi mong
+> muốn. H01 faithfulness = 0.00 cũng là false negative: câu "You have 21 calendar
+> days" có nguyên văn trong OT-09-P04 (giả thuyết chưa kiểm chứng: judge không nối
+> được với câu thì quá khứ "It allowed 21 calendar days" của v1.0). DeepEval dễ dãi:
+> M04 được relevancy 1.00 với lý do "addresses both … and the timeframe" trong khi
+> câu trả lời nói thẳng là không có thông tin về thời gian — judge đọc sai output,
+> đúng dấu hiệu leniency mà `detect_bias()` sẽ gắn cờ (mọi điểm ≥ 0.8).
 >
 > **Cùng failure cases?** Với ngưỡng 0.5: context recall — cả hai tìm ra **M04**
 > (DeepEval H04 = 0.50 nằm sát ngưỡng); context precision — cả hai tìm ra **A01**.
 > Faithfulness — RAGAS chỉ ra H01 (false negative), DeepEval không ra case nào,
-> heuristic ra M04/H04 (cũng là false negative). Không framework nào bắt được lỗi
-> thật của H01 và M04 ở phía answer (câu trả lời đúng nhưng thiếu lập luận/thiếu
-> ý) — vì faithfulness và relevancy không đo **completeness** so với expected answer.
+> heuristic ra M04/H04 (cũng là false negative). Answer relevancy — RAGAS ra M04,
+> H04 (đúng) và A01 (sai); DeepEval không ra case nào; heuristic gắn gần như mọi
+> case (5/7 < 0.5). RAGAS relevancy bắt được M04/H04, nhưng không framework nào
+> bắt được lỗi thật của H01 (câu trả lời đúng nhưng thiếu lập luận) — vì
+> faithfulness và relevancy không đo **completeness** so với expected answer.
 > Kết luận: dùng RAGAS/DeepEval retrieval metrics làm gate được; answer-side cần
 > thêm metric so với reference (vd. DeepEval G-Eval hoặc RAGAS factual correctness)
 > theo rubric Exercise 3.3, và calibration với người chấm trước khi tin điểm.

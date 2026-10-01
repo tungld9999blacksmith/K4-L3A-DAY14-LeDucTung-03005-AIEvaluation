@@ -28,7 +28,32 @@ GEMINI_BASE_URL = os.getenv(
     "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 REQUEST_PAUSE_SECONDS = 8
-EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+EMBEDDING_MODEL = os.getenv(
+    "HF_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
+
+
+def _hf_embeddings():
+    """LangChain Embeddings backed by the Hugging Face Inference API.
+
+    Gemini's OpenAI-compatible embeddings endpoint failed silently inside RAGAS
+    (AnswerRelevancy came back NaN), so embeddings go through HF instead.
+    """
+    from huggingface_hub import InferenceClient
+    from langchain_core.embeddings import Embeddings
+
+    client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
+
+    class HFInferenceEmbeddings(Embeddings):
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            vectors = client.feature_extraction(texts, model=EMBEDDING_MODEL, normalize=True)
+            return [list(map(float, v)) for v in vectors]
+
+        def embed_query(self, text: str) -> list[float]:
+            return self.embed_documents([text])[0]
+
+    return HFInferenceEmbeddings()
 
 
 def load_cases() -> list[dict]:
@@ -48,8 +73,8 @@ def load_cases() -> list[dict]:
     ]
 
 
-def run_ragas(cases: list[dict]) -> dict[str, dict[str, float]]:
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+def run_ragas(cases: list[dict], only: list[str] | None = None) -> dict[str, dict[str, float]]:
+    from langchain_openai import ChatOpenAI
     from ragas import EvaluationDataset, RunConfig, evaluate
     from ragas.embeddings import LangchainEmbeddingsWrapper
     from ragas.llms import LangchainLLMWrapper
@@ -64,14 +89,7 @@ def run_ragas(cases: list[dict]) -> dict[str, dict[str, float]]:
     llm = LangchainLLMWrapper(
         ChatOpenAI(model=JUDGE_MODEL, temperature=0, api_key=GEMINI_API_KEY, base_url=GEMINI_BASE_URL)
     )
-    emb = LangchainEmbeddingsWrapper(
-        OpenAIEmbeddings(
-            model=EMBEDDING_MODEL,
-            api_key=GEMINI_API_KEY,
-            base_url=GEMINI_BASE_URL,
-            check_embedding_ctx_length=False,
-        )
-    )
+    emb = LangchainEmbeddingsWrapper(_hf_embeddings())
     dataset = EvaluationDataset.from_list(
         [
             {
@@ -85,19 +103,24 @@ def run_ragas(cases: list[dict]) -> dict[str, dict[str, float]]:
     )
     metrics = [
         Faithfulness(llm=llm),
-        AnswerRelevancy(llm=llm, embeddings=emb),
+        # strictness=1: Gemini's OpenAI-compatible API rejects n>1 ("Multiple candidates").
+        AnswerRelevancy(llm=llm, embeddings=emb, strictness=1),
         LLMContextRecall(llm=llm),
         LLMContextPrecisionWithReference(llm=llm),
     ]
-    # Free-tier Gemini allows ~15 requests/minute: run serially and retry on 429.
-    run_config = RunConfig(max_workers=1, max_retries=15, max_wait=90, timeout=300)
-    df = evaluate(dataset, metrics=metrics, run_config=run_config, show_progress=True).to_pandas()
     columns = {
         "faithfulness": "faithfulness",
         "answer_relevancy": "answer_relevancy",
         "context_recall": "context_recall",
         "context_precision": "llm_context_precision_with_reference",
     }
+    if only:
+        keep = [i for i, m in enumerate(columns) if m in only]
+        metrics = [metrics[i] for i in keep]
+        columns = {m: col for m, col in columns.items() if m in only}
+    # Free-tier Gemini allows ~15 requests/minute: run serially and retry on 429.
+    run_config = RunConfig(max_workers=1, max_retries=15, max_wait=90, timeout=300)
+    df = evaluate(dataset, metrics=metrics, run_config=run_config, show_progress=True).to_pandas()
     return {
         c["id"]: {m: float(df.iloc[i][col]) for m, col in columns.items()}
         for i, c in enumerate(cases)
@@ -162,7 +185,20 @@ def main() -> int:
         print("GEMINI_API_KEY is missing; fill .env first.", file=sys.stderr)
         return 1
     cases = load_cases()
-    bench = json.loads((ROOT / "artifacts/benchmark_results.json").read_text(encoding="utf-8"))
+    if "--ragas-relevancy-only" in sys.argv:
+        # Re-score only RAGAS AnswerRelevancy and patch the saved comparison.
+        out_path = ROOT / "artifacts/framework_comparison.json"
+        out = json.loads(out_path.read_text(encoding="utf-8"))
+        t0 = time.time()
+        scores = run_ragas(cases, only=["answer_relevancy"])
+        for cid, s in scores.items():
+            out["ragas"][cid]["answer_relevancy"] = s["answer_relevancy"]
+            print(f"{cid:<4} ragas answer_relevancy {s['answer_relevancy']:.3f}")
+        out["ragas_embedding_model"] = f"{EMBEDDING_MODEL} (HF Inference API)"
+        out["runtime_seconds"]["ragas_relevancy_rerun"] = round(time.time() - t0, 1)
+        out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+        return 0
+    bench =json.loads((ROOT / "artifacts/benchmark_results.json").read_text(encoding="utf-8"))
     heuristic = {
         r["id"]: {
             "faithfulness": r["faithfulness"],
@@ -183,6 +219,7 @@ def main() -> int:
 
     out = {
         "judge_model": JUDGE_MODEL,
+        "ragas_embedding_model": f"{EMBEDDING_MODEL} (HF Inference API)",
         "case_ids": CASE_IDS,
         "runtime_seconds": {"ragas": round(t_ragas, 1), "deepeval": round(t_deepeval, 1)},
         "heuristic": heuristic,
